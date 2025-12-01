@@ -62,10 +62,10 @@ ly_front = shelf_start_y + leg_inset
 ly_back = shelf_start_y + shelf_depth_len - leg_inset
 
 # Component Dimensions
-pcie_w, pcie_d = 154.3, 67.3
+pcie_w, pcie_d = 154.3, 67.3 # Horizontal again
 pcie_hole_dist = 47.1
 pcie_offset_y = 3.4
-pcie_x, pcie_y = 20.35, 30 # Centered in 195mm tray (97.5 - 154.3/2)
+pcie_x, pcie_y = 20.35, 46 # Centered X, Y=46 (14mm back clearance)
 pcie_standoff_height = 6
 
 # Power Boards
@@ -76,6 +76,11 @@ dcdc_x, dcdc_y = 5, 5
 sata_real_w, sata_real_d = 60, 80
 sata_offset = 4.2
 sata_x, sata_y = 125, 15
+
+# Shelf Leg Bosses (Countersunk Screws)
+leg_boss_height = 2.5
+screw_head_dia = 6.0 # Clearance for 5.5mm head
+screw_head_height = 3.5 # Clearance for 3.0mm head
 
 # --- Generators ---
 
@@ -89,8 +94,11 @@ def make_shelf():
     ]
 
     with BuildPart() as shelf:
+        # Reduce leg height by boss height so deck remains at same absolute Z
+        leg_height = shelf_height - leg_boss_height
+
         # 1. Deck
-        with BuildSketch(Plane.XY.offset(shelf_height)):
+        with BuildSketch(Plane.XY.offset(leg_height)):
             with Locations(leg_locs):
                 Circle(radius=leg_diameter/2 if 'leg_diameter' in globals() else 6) # 12mm dia -> 6 radius
             make_hull()
@@ -100,7 +108,7 @@ def make_shelf():
         with BuildSketch(Plane.XY):
             with Locations(leg_locs):
                 Circle(radius=6)
-        extrude(amount=shelf_height)
+        extrude(amount=leg_height)
 
         # 3. Ribs (Hulls between legs)
         # In SCAD this was manual hulls. Here we can loft or hull profiles.
@@ -137,7 +145,7 @@ def make_shelf():
                 (x + offset, y + d - offset),
                 (x + w - offset, y + d - offset)
             ]
-            with BuildSketch(Plane.XY.offset(shelf_height - 4)) as sk:
+            with BuildSketch(Plane.XY.offset(leg_height - 4)) as sk:
                 with Locations(locs):
                     Circle(radius=4)
             extrude(sk.sketch, amount=4)
@@ -178,7 +186,7 @@ def make_shelf():
             add_mount_holes(sata_hole_x, sata_hole_y, sata_hole_w, sata_hole_d, 0)
 
             # Cable Holes
-            with BuildSketch(Plane.XY.offset(shelf_height)) as cut_sk:
+            with BuildSketch(Plane.XY.offset(leg_height)) as cut_sk:
                 # DC-DC
                 with Locations((dcdc_x + 9, dcdc_y + 9)):
                     r1 = Rectangle(50, 82, align=(Align.MIN, Align.MIN))
@@ -247,10 +255,19 @@ def make_tray():
                 
                 with BuildSketch(mode=Mode.SUBTRACT) as sk_solids:
                     # PCIe Mount Island
-                    with Locations((pcie_x - 5, pcie_y - 5)):
-                        Rectangle(20, pcie_d + 10, align=(Align.MIN, Align.MIN))
+                    with Locations((pcie_x + pcie_w - 20 - 5, pcie_y - 5)):
+                         # Island is now on the Right side (where holes are)
+                         # Holes are at pcie_w - 7.4.
+                         # Island width 20.
+                         # Let's position island at pcie_w - 25 relative to pcie_x?
+                         # Holes X rel: 146.9.
+                         # Island X rel: 135?
+                         # Let's align with holes.
+                         Rectangle(20, pcie_d + 10, align=(Align.MIN, Align.MIN))
+                    
                     # PCIe Support Beam
-                    with Locations((pcie_x + pcie_w - 10, pcie_y)):
+                    # Beam is now on the Left side (connector side)
+                    with Locations((pcie_x, pcie_y)):
                         Rectangle(10, pcie_d, align=(Align.MIN, Align.MIN))
                     # Leg Bases
                     with Locations([(lx_left, ly_front), (lx_left, ly_back), (lx_right, ly_front), (lx_right, ly_back)]):
@@ -285,13 +302,7 @@ def make_tray():
         with Locations((rack_inner_width, 0, 0)):
             Box(wall_thickness, tray_depth, tray_wall_height, align=(Align.MIN, Align.MIN, Align.MIN))
 
-        # Transition Floors (Small piece under the slope/behind ear)
-        # Left
-        with Locations((-wall_thickness, ear_thickness, 0)):
-            Box(wall_thickness, 15, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
-        # Right
-        with Locations((rack_inner_width, ear_thickness, 0)):
-            Box(wall_thickness, 15, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
+
 
 
         def make_ear(mirror_x=False):
@@ -357,26 +368,33 @@ def make_tray():
                 
             return p
 
+
+
         # Add Ears
         add(Location((0, 0, 0)) * make_ear(mirror_x=False))
         add(Location((rack_inner_width, 0, 0)) * make_ear(mirror_x=True))
         
+
+
         # Add Slopes (Explicit)
         add(make_slope(is_right=False))
         add(make_slope(is_right=True))
 
         # 3. Additions (Mounts)
-        # PCIe Mount Island
-        with Locations((pcie_x - 5, pcie_y - 5, 0)):
+        # PCIe Mount Island (Right side)
+        with Locations((pcie_x + pcie_w - 20 - 5, pcie_y - 5, 0)):
             Box(20, pcie_d + 10, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
-        # PCIe Support Beam
-        with Locations((pcie_x + pcie_w - 10, pcie_y, 0)):
+            
+        # PCIe Support Beam (Left side)
+        with Locations((pcie_x, pcie_y, 0)):
             Box(10, pcie_d, floor_thickness + pcie_standoff_height, align=(Align.MIN, Align.MIN, Align.MIN))
-        # Leg Bases
+        # Leg Bases (Bosses for shelf legs)
         with Locations([(lx_left, ly_front), (lx_left, ly_back), (lx_right, ly_front), (lx_right, ly_back)]):
-            Cylinder(radius=9, height=floor_thickness, align=(Align.CENTER, Align.CENTER, Align.MIN))
+            # Height = floor_thickness + leg_boss_height
+            Cylinder(radius=9, height=floor_thickness + leg_boss_height, align=(Align.CENTER, Align.CENTER, Align.MIN))
         # PCIe Standoffs
-        with Locations((pcie_x + 7.4, pcie_y + pcie_offset_y, floor_thickness - EPS)):
+        # Holes on Right side: pcie_x + pcie_w - 7.4
+        with Locations((pcie_x + pcie_w - 7.4, pcie_y + pcie_offset_y, floor_thickness - EPS)):
             Cylinder(radius=4, height=pcie_standoff_height, align=(Align.CENTER, Align.CENTER, Align.MIN))
             with Locations((0, pcie_hole_dist, 0)):
                 Cylinder(radius=4, height=pcie_standoff_height, align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -412,16 +430,20 @@ def make_tray():
                 with Locations(Rotation(90, 0, 0)):
                     Cylinder(radius=dc_jack_dia/2, height=10)
 
-            # PCIe Holes
-            with Locations((pcie_x + 7.4, pcie_y + pcie_offset_y, -10)):
+            # PCIe Holes (Right side)
+            with Locations((pcie_x + pcie_w - 7.4, pcie_y + pcie_offset_y, -10)):
                 Cylinder(radius=1.4, height=50)
                 with Locations((0, pcie_hole_dist, 0)):
                     Cylinder(radius=1.4, height=50)
 
-            # Shelf Mounting Holes
+            # Shelf Mounting Holes (Countersunk)
             with Locations([(lx_left, ly_front), (lx_left, ly_back), (lx_right, ly_front), (lx_right, ly_back)]):
+                # Through hole
                 with Locations((0,0,-10)):
                     Cylinder(radius=screw_hole_dia/2, height=50)
+                # Countersink (from bottom)
+                # Align.MIN means cylinder starts at Z=0 and goes up.
+                Cylinder(radius=screw_head_dia/2, height=screw_head_height, align=(Align.CENTER, Align.CENTER, Align.MIN))
 
     # 3. Combine Floor and Walls
     # The floor part currently only has the floor.
@@ -608,20 +630,32 @@ def make_pcie_card(location=Location((0,0,0))):
     add_colored(hs_geom, Color("silver"), Location((pcie_w/2, pcie_d/2, z_top)))
         
     # SATA Ports (Black)
+    # If holes are on Right, connector is on Left.
+    # SATA ports usually opposite to bracket?
+    # Standard PCIe: Bracket Left, Connector Bottom, Components Top.
+    # If we look at card from top: Bracket Left.
+    # Holes are usually near bracket?
+    # Wait, standard PCIe holes are on the bracket side? No, bracket IS the mount.
+    # This "PCIe to M.2" adapter seems to have mounting holes on the PCB itself.
+    # If holes are on Right, and bracket is on Left (X=0).
     sata_geom = Box(15, 10, 8, align=(Align.CENTER, Align.CENTER, Align.MIN))
     for i in range(5):
-        add_colored(sata_geom, Color("black"), Location((pcie_w - 10, 10 + i*12, z_top)))
-                 
+        add_colored(sata_geom, Color("black"), Location((pcie_w - 10, 10 + i*12, z_top))) # Ports on Right?
+        # If bracket is Left, ports are usually accessible from ... top?
+        # Let's leave ports on Right for now.
+
     # Bracket (Silver)
+    # Bracket is along Y (depth) at X=0 (Left)
     bracket_geom = Box(2, pcie_d + 20, 12, align=(Align.MIN, Align.CENTER, Align.CENTER))
-    add_colored(bracket_geom, Color("white"), Location((0, pcie_d/2, 0))) # White/Silver
+    add_colored(bracket_geom, Color("white"), Location((0, pcie_d/2, 0)))
 
     return Compound(children=parts)
 
 # --- Visualization Objects ---
 
 # Calculate final locations for boards
-shelf_assembly_loc = Location((sh_off_x, shelf_start_y, floor_thickness))
+# Shelf is now on bosses, so its Z origin (bottom of legs) is at Z = floor_thickness + leg_boss_height
+shelf_assembly_loc = Location((sh_off_x, shelf_start_y, floor_thickness + leg_boss_height))
 
 dcdc_loc = shelf_assembly_loc * Location((dcdc_x, dcdc_y, shelf_height + shelf_thickness + 2))
 sata_loc = shelf_assembly_loc * Location((sata_x, sata_y, shelf_height + shelf_thickness + 2))
@@ -699,7 +733,7 @@ try:
     # My make_shelf starts at Z=0 (bottom of legs).
     # So we translate shelf to sit on tray floor.
     
-    shelf_assembly_loc = Location((sh_off_x, shelf_start_y, floor_thickness))
+    shelf_assembly_loc = Location((sh_off_x, shelf_start_y, floor_thickness + leg_boss_height))
     
     show(
         tray_part,
