@@ -38,23 +38,24 @@ pcie_w, pcie_d = 154.3, 67.3
 pcie_hole_dist = 47.1
 pcie_offset_y = 3.4
 pcie_x, pcie_y = 20.35, 46 # Front (44mm clearance)
-pcie_standoff_height = 6
+pcie_standoff_height = 10  # Increased from 6mm for better riser card clearance
+
 
 # Power Boards
 # Rotated 90 degrees: Width becomes 100.3, Depth becomes 68.5
-dcdc_w, dcdc_d = 100.3, 68.5 
+dcdc_w, dcdc_d = 100.3, 68.5 # DC-DC is stacked on Bridge (Rotated: 100.3 x 68.5)
 dcdc_offset = 2.5
-dcdc_x, dcdc_y = 10, 120 # Moved to Left Wall (10mm gap)
+dcdc_x, dcdc_y = 10, 115  # Moved 5mm forward for connector clearance # Moved to Left Wall (10mm gap)
 
 sata_real_w, sata_real_d = 60, 80
 sata_offset = 4.2
 # SATA is stacked on DC-DC (Rotated)
 # Center SATA on DC-DC:
-sata_x, sata_y = dcdc_x + (dcdc_w - sata_real_w)/2, 120 + (dcdc_d - sata_real_d)/2
+sata_x, sata_y = dcdc_x + (dcdc_w - sata_real_w)/2, dcdc_y + (dcdc_d - sata_real_d)/2
 
 # Bridge Dimensions
-bridge_height = 20 # Clearance for DC-DC components
-bridge_leg_dia = 6 # Reduced from 8 to avoid crowding DC-DC
+bridge_height = 15  # Reduced to 15mm per user request
+bridge_leg_dia = 6  # Reduced from 8 to avoid crowding DC-DC
 
 # Shelf Leg Bosses (Countersunk Screws)
 leg_boss_height = 2.5
@@ -109,10 +110,13 @@ def make_bridge():
         # 3. Holes
         with BuildPart(mode=Mode.SUBTRACT):
             # Leg Holes (through-holes for screws - only through LEGS, not frame top)
-            # Start holes at Z=-1 (below frame) and extend down through legs
+            # 2.8mm holes for self-tapping into legs
             with Locations([(x, y, -1) for x in [-dcdc_hole_w/2, dcdc_hole_w/2] for y in [-dcdc_hole_d/2, dcdc_hole_d/2]]):
-                Cylinder(radius=3.2/2, height=bridge_height + 1, align=(Align.CENTER, Align.CENTER, Align.MAX))
-            # SATA mounting holes removed - SATA board sits directly on frame, no screws needed
+                Cylinder(radius=2.8/2, height=bridge_height + 1, align=(Align.CENTER, Align.CENTER, Align.MAX))
+            
+            # SATA Mounting Holes (top of frame)
+            with Locations([(x, y, 2) for x in [-sata_hole_w/2, sata_hole_w/2] for y in [-sata_hole_d/2, sata_hole_d/2]]):
+                Cylinder(radius=2.8/2, height=5, align=(Align.CENTER, Align.CENTER, Align.MAX))
 
     return bridge.part
 
@@ -247,7 +251,7 @@ def make_tray():
             # Create the wedge
             with BuildPart() as slope:
                 # Sketch in YZ plane
-                # Triangle: (0,0) -> (0, 34.45) -> (20, 0)
+                # Triangle: (0,0) -> (0, tray_height - 10), (20, 0)
                 with BuildSketch(Plane.YZ) as sk:
                     Polygon([(0,0), (0, tray_height - 10), (20, 0)])
                 
@@ -309,6 +313,37 @@ def make_tray():
         # Rear strip (for rear 2 bosses)
         with Locations((dcdc_x, dcdc_y + dcdc_d - dcdc_strip_thickness - 4.25, 0)):
             Box(dcdc_strip_width, dcdc_strip_thickness, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
+        
+        # USB-C Socket Mount Bracket (Right rear corner)
+        usbc_bracket_width = 20
+        usbc_bracket_thickness = 10  # Thicker for stability, extends into tray
+        usbc_bracket_height = 25  # Height for vertical mount
+        usbc_hole_dia = 19  # Increased from 15mm (14.5mm socket + 4mm clearance)
+        usbc_hole_height = 18  # Raised from 12mm to 18mm
+        
+        # Bracket position: right edge of tray, flush with rear wall
+        usbc_x = rack_inner_width - usbc_bracket_width - 2
+        usbc_y = tray_depth - usbc_bracket_thickness  # Extends inward from rear wall
+        
+        # Bracket base and vertical wall (extends into tray, flush with rear wall)
+        with Locations((usbc_x, usbc_y, 0)):
+            bracket = Box(usbc_bracket_width, usbc_bracket_thickness, usbc_bracket_height, 
+                         align=(Align.MIN, Align.MIN, Align.MIN))
+        
+        # Top cap above the hole (to close the top)
+        cap_thickness = 3  # 3mm thick cap
+        with Locations((usbc_x, usbc_y, usbc_bracket_height)):
+            Box(usbc_bracket_width, usbc_bracket_thickness, cap_thickness, 
+                align=(Align.MIN, Align.MIN, Align.MIN))
+        
+        # USB-C hole through the bracket
+        with BuildPart(mode=Mode.SUBTRACT):
+            # Hole centered in bracket, long enough to go through completely
+            hole_y_center = usbc_y + usbc_bracket_thickness/2
+            with Locations((usbc_x + usbc_bracket_width/2, hole_y_center, usbc_hole_height)):
+                with Locations(Rotation(90, 0, 0)):  # Horizontal hole facing rear
+                    Cylinder(radius=usbc_hole_dia/2, height=usbc_bracket_thickness + 5, 
+                           align=(Align.CENTER, Align.CENTER, Align.CENTER))
         
         # Leg Bases (Removed)
 
@@ -397,8 +432,21 @@ def make_tray():
                 with Locations((0, pcie_hole_dist, 0)):
                     Cylinder(radius=1.4, height=50)
 
-            # DC-DC Holes (Explicit spacing)
-            add_mount_holes(dcdc_hole_x, dcdc_hole_y, dcdc_hole_w, dcdc_hole_d, 0)
+            # DC-DC Holes (3mm with countersink for M3 screws, like v106)\n            dcdc_hole_w = 91.5
+            dcdc_hole_d = 60
+            dcdc_hole_x = dcdc_x + (dcdc_w - dcdc_hole_w) / 2
+            dcdc_hole_y = dcdc_y + (dcdc_d - dcdc_hole_d) / 2
+            
+            # 4 corners: countersink from BOTTOM like v106
+            with Locations([(dcdc_hole_x, dcdc_hole_y), 
+                           (dcdc_hole_x + dcdc_hole_w, dcdc_hole_y),
+                           (dcdc_hole_x, dcdc_hole_y + dcdc_hole_d),
+                           (dcdc_hole_x + dcdc_hole_w, dcdc_hole_y + dcdc_hole_d)]):
+                # Through hole (3mm for M3)
+                with Locations((0, 0, -10)):
+                    Cylinder(radius=3.0/2, height=50, align=(Align.CENTER, Align.CENTER, Align.CENTER))
+                # Countersink from bottom (starts at Z=0, goes up)
+                Cylinder(radius=screw_head_dia/2, height=screw_head_height, align=(Align.CENTER, Align.CENTER, Align.MIN))
             # SATA Holes (Removed - SATA is on Bridge)
             # add_mount_holes(sata_hole_x, sata_hole_y, sata_hole_w, sata_hole_d, 0)
 
