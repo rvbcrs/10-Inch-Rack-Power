@@ -21,13 +21,13 @@ screw_hole_dia = 3.2
 screw_pilot_dia = 2.8
 # Dimensions (mm)
 rack_width = 10 * 25.4 # 254.0 mm
-rack_inner_width = 195
+rack_inner_width = 220 # Updated to match SCAD reference (was 195)
 tray_height = 1.75 * 25.4 # 1U = 44.45 mm
 tray_depth = 200  # Reduced from 220 to minimize excess space beyond DC-DC board
 
 floor_thickness = 2
 wall_thickness = 1.6
-ear_thickness = 3.2
+ear_thickness = 3.0 # Updated to 3.0mm to match make_ear and avoid step
 EPS = 0.01
 
 # Positioning Legs (Removed Shelf)
@@ -86,21 +86,39 @@ def make_bridge():
         # Build bottom-up: Start with frame at Z=0, legs extend downward
         
         # 1. Top Frame/Plate (at Z=0, this will be the reference point)
+        # Create solid plate with 4mm border and cutout center with support bars
+        # 1. Top Frame/Plate (at Z=0, this will be the reference point)
         with BuildSketch(Plane.XY):
-            # Outer boundary
+            # 1. Base Plate
             Rectangle(plate_w, plate_d)
-            # Inner cutout (leave 6mm rim for strength, maximize material savings)
-            Rectangle(plate_w - 12, plate_d - 12, mode=Mode.SUBTRACT)
             
-            # Add Cross Bars for SATA mounting holes
-            # Run bars along Y at X = +/- 25 (under SATA holes)
-            with Locations([(x, 0) for x in [-25, 25]]):
-                Rectangle(12, plate_d) # 12mm wide bars
+            # 2. Hexagon Pattern (to be subtracted)
+            with BuildSketch(mode=Mode.PRIVATE) as sk_hex:
+                with HexLocations(radius=8, x_count=8, y_count=6):
+                    RegularPolygon(radius=7.5, side_count=6)
+            
+            # 3. Safe Zone (Inner Rectangle where hexes are allowed)
+            with BuildSketch(mode=Mode.PRIVATE) as sk_safe:
+                Rectangle(plate_w - 8, plate_d - 8)
                 
-            # Add Center Cross Bar for stability
-            Rectangle(plate_w, 10)
+            # 4. Support Areas (Bars + Circles that must remain solid)
+            with BuildSketch(mode=Mode.PRIVATE) as sk_supports:
+                # SATA bars
+                with Locations([(x, 0) for x in [-25, 25]]):
+                    Rectangle(10, plate_d)
+                # Center bar
+                Rectangle(plate_w, 10)
+                # Leg circles
+                with Locations([(x, y) for x in [-dcdc_hole_w/2, dcdc_hole_w/2] for y in [-dcdc_hole_d/2, dcdc_hole_d/2]]):
+                    Circle(radius=7)
+
+            # 5. Combine to create the cutouts
+            # Cutouts = (Hexagons INTERSECT SafeZone) MINUS SupportAreas
+            # We want to SUBTRACT these Cutouts from the Base Plate.
+            cutouts = (sk_hex.sketch & sk_safe.sketch) - sk_supports.sketch
+            add(cutouts, mode=Mode.SUBTRACT)
             
-        extrude(amount=2) # Frame is 2mm thick
+        extrude(amount=2)  # Frame is 2mm thick
         
         # 2. Legs extending DOWN from the frame
         # Legs are at the DC-DC hole locations, extending down by bridge_height
@@ -110,13 +128,14 @@ def make_bridge():
         # 3. Holes
         with BuildPart(mode=Mode.SUBTRACT):
             # Leg Holes (through-holes for screws - only through LEGS, not frame top)
-            # 2.8mm holes for self-tapping into legs
+            # Reduced to 2.5mm for tighter self-tapping fit (was 2.8mm)
             with Locations([(x, y, -1) for x in [-dcdc_hole_w/2, dcdc_hole_w/2] for y in [-dcdc_hole_d/2, dcdc_hole_d/2]]):
-                Cylinder(radius=2.8/2, height=bridge_height + 1, align=(Align.CENTER, Align.CENTER, Align.MAX))
+                Cylinder(radius=2.5/2, height=bridge_height + 1, align=(Align.CENTER, Align.CENTER, Align.MAX))
             
             # SATA Mounting Holes (top of frame)
+            # Reduced to 2.5mm
             with Locations([(x, y, 2) for x in [-sata_hole_w/2, sata_hole_w/2] for y in [-sata_hole_d/2, sata_hole_d/2]]):
-                Cylinder(radius=2.8/2, height=5, align=(Align.CENTER, Align.CENTER, Align.MAX))
+                Cylinder(radius=2.5/2, height=5, align=(Align.CENTER, Align.CENTER, Align.MAX))
 
     return bridge.part
 
@@ -144,8 +163,8 @@ def make_tray():
                     with Locations((rack_inner_width/2, tray_depth/2)): # Centered horizontally and vertically
                         with HexLocations(radius=16, x_count=10, y_count=8):
                             # Use RegularPolygon for Honeycomb (Hexagon)
-                            # radius=14 gives 2mm wall thickness (16-14=2)
-                            RegularPolygon(radius=14, side_count=6)
+                            # radius=16 gives 0mm wall thickness - hexagons touch for maximum material savings
+                            RegularPolygon(radius=16, side_count=6)
                 
                 with BuildSketch(mode=Mode.INTERSECT) as sk_safe:
                     # Safe Area (Rectangle - Safe Border)
@@ -187,20 +206,57 @@ def make_tray():
 
         extrude(amount=floor_thickness)
         
-        # Floor beneath ears (outside the main floor area)
-        # Left ear floor
-        with Locations((-ear_w_total, 0, 0)):
-            Box(ear_w_total, ear_thickness, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
-        # Right ear floor  
-        with Locations((rack_inner_width, 0, 0)):
-            Box(ear_w_total, ear_thickness, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
+        # Floor beneath ears (REMOVED to prevent protrusion artifact)
+        # The ear itself acts as the structure.
 
         # 2. Frame Structure (Walls & Ears)
+        # Create unified front profile (faceplate + ears) to avoid overlap artifacts
         
-        # Faceplate - only inner width (ears have their own front)
-        with Locations((0, 0, 0)):
-            Box(rack_inner_width, ear_thickness, tray_height, align=(Align.MIN, Align.MIN, Align.MIN))
+        # Unified Front Face (Faceplate + Both Ears)
+        with BuildSketch(Plane.XZ.offset(0)) as sk_front:
+            # Ear dimensions
+            ear_w = 17
+            slot_center_x_left = -8.25  # Relative to X=0
+            slot_center_x_right = rack_inner_width + 8.25  # Relative to X=rack_inner_width
+            slot_width = 9
+            slot_height = 6
+            hole_z_offset = 15.88
+            slot_z_center = tray_height / 2
             
+            # Main faceplate rectangle (inner width only)
+            with Locations((rack_inner_width/2, tray_height/2)):
+                Rectangle(rack_inner_width, tray_height)
+            
+            # Left ear
+            with Locations((-ear_w/2, tray_height/2)):
+                Rectangle(ear_w, tray_height)
+            
+            # Right ear
+            with Locations((rack_inner_width + ear_w/2, tray_height/2)):
+                Rectangle(ear_w, tray_height)
+            
+            # Fillet outer corners of ears
+            # Left ear outer corners (at X = -17)
+            left_outer_verts = sk_front.vertices().filter_by(lambda v: abs(v.X + ear_w) < 0.1)
+            fillet(left_outer_verts, radius=5.0)
+            
+            # Right ear outer corners (at X = 237)
+            right_outer_verts = sk_front.vertices().filter_by(lambda v: abs(v.X - (rack_inner_width + ear_w)) < 0.1)
+            fillet(right_outer_verts, radius=5.0)
+            
+            # Cut slots in left ear
+            with Locations([(slot_center_x_left, slot_z_center + hole_z_offset), 
+                          (slot_center_x_left, slot_z_center - hole_z_offset)]):
+                SlotOverall(width=slot_width, height=slot_height, rotation=0, mode=Mode.SUBTRACT)
+            
+            # Cut slots in right ear
+            with Locations([(slot_center_x_right, slot_z_center + hole_z_offset), 
+                          (slot_center_x_right, slot_z_center - hole_z_offset)]):
+                SlotOverall(width=slot_width, height=slot_height, rotation=0, mode=Mode.SUBTRACT)
+        
+        # Extrude the unified front face
+        extrude(sk_front.sketch, amount=ear_thickness)
+        
         # Back Wall
         with Locations((0, tray_depth - wall_thickness, 0)):
             Box(rack_inner_width, wall_thickness, tray_wall_height, align=(Align.MIN, Align.MIN, Align.MIN))
@@ -213,32 +269,6 @@ def make_tray():
         # Right Wall
         with Locations((rack_inner_width, 0, 0)):
             Box(wall_thickness, tray_depth, tray_wall_height, align=(Align.MIN, Align.MIN, Align.MIN))
-
-
-
-
-        def make_ear(mirror_x=False):
-            """Simple ear - just the mounting flange"""
-            with BuildPart() as ear:
-                 # Front face of ear (full height)
-                 w = ear_w_total + 0.5
-                 h = tray_height
-                 d = ear_thickness
-                 
-                 # Center X calculation:
-                 # Right edge at 0.5.
-                 # Center = 0.5 - w/2
-                 cx = 0.5 - w/2
-                 
-                 with Locations((cx, d/2, h/2)):
-                     b = Box(w, d, h)
-                     # Fillet outer edges (min X)
-                     outer_edges = b.edges().filter_by(Axis.Y).sort_by(Axis.X)[0:2]
-                     fillet(outer_edges, radius=2)
-                
-            if mirror_x:
-                return mirror(ear.part, Plane.YZ)
-            return ear.part
 
         def make_slope(is_right=False):
             """Generates the slope wedge explicitly for left or right side."""
@@ -258,14 +288,10 @@ def make_tray():
                 if is_right:
                     # Right side: Starts at X = rack_inner_width
                     # Extrude in +X direction (wall thickness)
-                    # Wait, Right Wall is [215, 217].
-                    # So start at 215, extrude +2.
                     extrude(sk.sketch, amount=wall_thickness)
                 else:
                     # Left side: Starts at X = 0
                     # Extrude in -X direction (wall thickness)
-                    # Left Wall is [-2, 0].
-                    # So start at 0, extrude -2.
                     extrude(sk.sketch, amount=-wall_thickness)
             
             p = slope.part
@@ -279,12 +305,6 @@ def make_tray():
                 p = p.moved(Location((0, 10, 25)))
                 
             return p
-
-
-
-        # Add Ears
-        add(Location((0, 0, 0)) * make_ear(mirror_x=False))
-        add(Location((rack_inner_width, 0, 0)) * make_ear(mirror_x=True))
         
 
 
@@ -306,42 +326,48 @@ def make_tray():
         dcdc_strip_width = 100.3  # Full width of DC-DC board
         dcdc_strip_thickness = 10  # 10mm wide strips
         
-        # Front strip (for front 2 bosses)
-        with Locations((dcdc_x, dcdc_y + 4.25, 0)):  # 4.25 = offset to DC-DC front holes
+        # Calculate hole positions to center strips on them
+        dcdc_hole_w = 91.5
+        dcdc_hole_d = 60
+        dcdc_hole_x = dcdc_x + (dcdc_w - dcdc_hole_w) / 2
+        dcdc_hole_y = dcdc_y + (dcdc_d - dcdc_hole_d) / 2
+        
+        # Front strip (centered on front holes)
+        with Locations((dcdc_x, dcdc_hole_y - dcdc_strip_thickness/2, 0)):
             Box(dcdc_strip_width, dcdc_strip_thickness, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
         
-        # Rear strip (for rear 2 bosses)
-        with Locations((dcdc_x, dcdc_y + dcdc_d - dcdc_strip_thickness - 4.25, 0)):
+        # Rear strip (centered on rear holes)
+        with Locations((dcdc_x, dcdc_hole_y + dcdc_hole_d - dcdc_strip_thickness/2, 0)):
             Box(dcdc_strip_width, dcdc_strip_thickness, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
         
-        # USB-C Socket Mount Bracket (Right rear corner)
-        usbc_bracket_width = 20
-        usbc_bracket_thickness = 10  # Thicker for stability, extends into tray
+        # USB-C Socket Mount Bracket (Right rear corner) - REINFORCED
+        usbc_bracket_width = 30  # Increased from 20 to 30mm for thicker walls
+        usbc_bracket_thickness = 15  # 15mm deep into tray
         usbc_bracket_height = 25  # Height for vertical mount
-        usbc_hole_dia = 19  # Increased from 15mm (14.5mm socket + 4mm clearance)
-        usbc_hole_height = 18  # Raised from 12mm to 18mm
+        usbc_hole_dia = 17  # Reduced from 19 to 17mm for thicker walls (14.5mm socket + 2.5mm clearance)
+        usbc_hole_height = 18  # Center height
         
-        # Bracket position: right edge of tray, flush with rear wall
+        # Bracket position: right edge of tray
         usbc_x = rack_inner_width - usbc_bracket_width - 2
-        usbc_y = tray_depth - usbc_bracket_thickness  # Extends inward from rear wall
+        usbc_y = tray_depth - usbc_bracket_thickness
         
-        # Bracket base and vertical wall (extends into tray, flush with rear wall)
+        # Main bracket body
         with Locations((usbc_x, usbc_y, 0)):
-            bracket = Box(usbc_bracket_width, usbc_bracket_thickness, usbc_bracket_height, 
-                         align=(Align.MIN, Align.MIN, Align.MIN))
+            Box(usbc_bracket_width, usbc_bracket_thickness, usbc_bracket_height, 
+                align=(Align.MIN, Align.MIN, Align.MIN))
         
-        # Top cap above the hole (to close the top)
-        cap_thickness = 3  # 3mm thick cap
+        # Top cap (thicker for strength)
+        cap_thickness = 5  # Increased from 3 to 5mm for better strength
         with Locations((usbc_x, usbc_y, usbc_bracket_height)):
             Box(usbc_bracket_width, usbc_bracket_thickness, cap_thickness, 
                 align=(Align.MIN, Align.MIN, Align.MIN))
         
-        # USB-C hole through the bracket
+        # USB-C hole (centered in bracket width)
         with BuildPart(mode=Mode.SUBTRACT):
-            # Hole centered in bracket, long enough to go through completely
             hole_y_center = usbc_y + usbc_bracket_thickness/2
-            with Locations((usbc_x + usbc_bracket_width/2, hole_y_center, usbc_hole_height)):
-                with Locations(Rotation(90, 0, 0)):  # Horizontal hole facing rear
+            hole_x_center = usbc_x + usbc_bracket_width/2
+            with Locations((hole_x_center, hole_y_center, usbc_hole_height)):
+                with Locations(Rotation(90, 0, 0)):
                     Cylinder(radius=usbc_hole_dia/2, height=usbc_bracket_thickness + 5, 
                            align=(Align.CENTER, Align.CENTER, Align.CENTER))
         
@@ -397,29 +423,6 @@ def make_tray():
                 ]
                 with Locations(locs):
                     Cylinder(radius=1.4, height=50, align=(Align.CENTER, Align.CENTER, Align.CENTER))
-            # Rack Slots (Horizontal, Rounded)
-            # Standard 10" rack hole spacing is approx 236.5mm center-to-center
-            # (Derived from previous values: 220 + 8.25 - (-8.25) = 236.5)
-            hole_spacing = 236.5
-            center_x = rack_inner_width / 2
-            
-            x_left = center_x - hole_spacing / 2
-            x_right = center_x + hole_spacing / 2
-            
-            # Z positions
-            z_bottom = 7.225
-            z_top = 37.225
-            
-            for x in [x_left, x_right]:
-                for z in [z_bottom, z_top]:
-                    # Rounded slot: 12mm wide, 7mm high
-                    # Use Box + Fillet for robustness
-                    with Locations((x, ear_thickness/2, z)):
-                        # Create box centered at location
-                        b = Box(12, 20, 7, align=(Align.CENTER, Align.CENTER, Align.CENTER))
-                        # Fillet the edges along Y axis (the cutting direction)
-                        # Radius 3.5mm makes the 7mm height fully rounded (semicircle ends)
-                        fillet(b.edges().filter_by(Axis.Y), radius=3.49) # Use slightly less than 3.5 to avoid geometric singularities
 
             # DC Jack
             with Locations((15, tray_depth + 5, 8)):
