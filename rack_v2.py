@@ -87,20 +87,33 @@ def make_bridge():
         
         # 1. Top Frame/Plate (at Z=0, this will be the reference point)
         with BuildSketch(Plane.XY):
-            # Outer boundary
+            # 1. Base Plate
             Rectangle(plate_w, plate_d)
-            # Inner cutout (leave 6mm rim for strength, maximize material savings)
-            Rectangle(plate_w - 12, plate_d - 12, mode=Mode.SUBTRACT)
             
-            # Add Cross Bars for SATA mounting holes
-            # Run bars along Y at X = +/- 25 (under SATA holes)
-            with Locations([(x, 0) for x in [-25, 25]]):
-                Rectangle(12, plate_d) # 12mm wide bars
+            # 2. Hexagon Pattern (to be subtracted)
+            with BuildSketch(mode=Mode.PRIVATE) as sk_hex:
+                with HexLocations(radius=9, x_count=8, y_count=6):
+                    RegularPolygon(radius=8.85, side_count=6)  # Larger hexagons, ~0.3mm walls
+            
+            # 3. Safe Zone (Inner Rectangle where hexes are allowed)
+            with BuildSketch(mode=Mode.PRIVATE) as sk_safe:
+                Rectangle(plate_w - 12, plate_d - 12)  # 6mm rim on all sides
                 
-            # Add Center Cross Bar for stability
-            Rectangle(plate_w, 10)
+            # 4. Support Areas (must remain solid)
+            with BuildSketch(mode=Mode.PRIVATE) as sk_supports:
+                # Leg circles (around DC-DC mounting holes)
+                with Locations([(x, y) for x in [-dcdc_hole_w/2, dcdc_hole_w/2] for y in [-dcdc_hole_d/2, dcdc_hole_d/2]]):
+                    Circle(radius=7)
+                # SATA mounting circles (around SATA mounting holes)
+                with Locations([(x, y) for x in [-sata_hole_w/2, sata_hole_w/2] for y in [-sata_hole_d/2, sata_hole_d/2]]):
+                    Circle(radius=7)
+
+            # 5. Combine to create the cutouts
+            # Cutouts = (Hexagons INTERSECT SafeZone) MINUS SupportAreas
+            cutouts = (sk_hex.sketch & sk_safe.sketch) - sk_supports.sketch
+            add(cutouts, mode=Mode.SUBTRACT)
             
-        extrude(amount=2) # Frame is 2mm thick
+        extrude(amount=2)  # Frame is 2mm thick
         
         # 2. Legs extending DOWN from the frame
         # Legs are at the DC-DC hole locations, extending down by bridge_height
@@ -314,24 +327,24 @@ def make_tray():
         with Locations((dcdc_x, dcdc_y + dcdc_d - dcdc_strip_thickness - 4.25, 0)):
             Box(dcdc_strip_width, dcdc_strip_thickness, floor_thickness, align=(Align.MIN, Align.MIN, Align.MIN))
         
-        # USB-C Socket Mount Bracket (Right rear corner)
-        usbc_bracket_width = 20
-        usbc_bracket_thickness = 10  # Thicker for stability, extends into tray
+        # USB-C Socket Mount Bracket (Right rear corner) - REINFORCED
+        usbc_bracket_width = 35  # Large width for thick walls around hole
+        usbc_bracket_thickness = 10  # 10mm for socket mounting access
         usbc_bracket_height = 25  # Height for vertical mount
-        usbc_hole_dia = 19  # Increased from 15mm (14.5mm socket + 4mm clearance)
-        usbc_hole_height = 18  # Raised from 12mm to 18mm
+        usbc_hole_dia = 17  # 17mm for 15mm socket + 2mm clearance
+        usbc_hole_height = 18  # Center height
         
-        # Bracket position: right edge of tray, flush with rear wall
+        # Bracket position: right edge of tray
         usbc_x = rack_inner_width - usbc_bracket_width - 2
-        usbc_y = tray_depth - usbc_bracket_thickness  # Extends inward from rear wall
+        usbc_y = tray_depth - usbc_bracket_thickness
         
-        # Bracket base and vertical wall (extends into tray, flush with rear wall)
+        # Main bracket body
         with Locations((usbc_x, usbc_y, 0)):
-            bracket = Box(usbc_bracket_width, usbc_bracket_thickness, usbc_bracket_height, 
-                         align=(Align.MIN, Align.MIN, Align.MIN))
+            Box(usbc_bracket_width, usbc_bracket_thickness, usbc_bracket_height, 
+                align=(Align.MIN, Align.MIN, Align.MIN))
         
-        # Top cap above the hole (to close the top)
-        cap_thickness = 3  # 3mm thick cap
+        # Top cap (thicker for strength)
+        cap_thickness = 5  # 5mm thick cap for strength
         with Locations((usbc_x, usbc_y, usbc_bracket_height)):
             Box(usbc_bracket_width, usbc_bracket_thickness, cap_thickness, 
                 align=(Align.MIN, Align.MIN, Align.MIN))
